@@ -18,7 +18,7 @@ from bson import ObjectId
 
 # ------------------ DATABASE CONNECTION ------------------
 def get_database():
-    CONNECTION_URL = "mongodb+srv://roypannalal007:niptahai7@namastenode.fl0zbze.mongodb.net"
+    CONNECTION_URL = os.env.get("CONNECTION_URL")
     if not CONNECTION_URL:
         raise Exception("Missing CONNECTION_URL environment variable")
     client = MongoClient(CONNECTION_URL)
