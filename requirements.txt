@@ -13,3 +13,4 @@ pandas==2.2.0
 opencv-python-headless==4.9.0.80
 protobuf==4.25.3
 mtcnn==0.1.1
+gunicorn==21.2.0

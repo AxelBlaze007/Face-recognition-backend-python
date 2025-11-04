@@ -1,3 +1,6 @@
+import os
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'  # Suppress TensorFlow warnings
+
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -10,11 +13,11 @@ from pymongo import MongoClient
 import numpy as np
 from datetime import datetime, timedelta
 import pytz
-import os
 import base64
 from io import BytesIO
 from PIL import Image
 from bson import ObjectId
+import time
 
 # ------------------ DATABASE CONNECTION ------------------
 def get_database():
@@ -209,13 +212,27 @@ app = Flask(__name__)
 CORS(app)
 
 # JWT Configuration
-app.config['JWT_SECRET_KEY'] = 'attendease-secret-key-change-in-production'
+app.config['JWT_SECRET_KEY'] = os.environ.get('JWT_SECRET_KEY', 'attendease-secret-key-change-in-production')
 app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(days=1)
 jwt = JWTManager(app)
 
+# ------------------ PRELOAD DEEPFACE MODELS ------------------
+print("=" * 60)
+print("🔄 Preloading DeepFace models for faster inference...")
+try:
+    # Build and cache Facenet model
+    DeepFace.build_model("Facenet")
+    print("✅ Facenet model loaded and cached successfully")
+except Exception as e:
+    print(f"⚠️  Warning: Could not preload Facenet model: {e}")
+    print("Model will be loaded on first use")
+print("=" * 60)
+
+# ------------------ FACE RECOGNITION ENDPOINTS ------------------
 @app.route('/face_match', methods=['POST'])
 def face_match():
     """Match uploaded face with stored faces and update attendance"""
+    start_time = time.time()
     try:
         # Check for both 'file1' (old format) and 'image' (new format)
         file_key = 'image' if 'image' in request.files else 'file1'
@@ -234,7 +251,9 @@ def face_match():
         uploaded_file.seek(0)  # Reset file pointer
         
         response = compare_faces(uploaded_file)
+        elapsed_time = time.time() - start_time
         print(f"Face comparison result: {response}")
+        print(f"⏱️  Face matching took {elapsed_time:.2f} seconds")
         print(f"========================")
         
         if response:
@@ -246,7 +265,8 @@ def face_match():
                 return jsonify({
                     "success": True, 
                     "message": "Face matched and attendance marked successfully",
-                    "employee_name": response
+                    "employee_name": response,
+                    "processing_time": f"{elapsed_time:.2f}s"
                 })
             else:
                 return jsonify({
@@ -256,16 +276,21 @@ def face_match():
         else:
             return jsonify({
                 "success": False, 
-                "message": "Face not recognized. Please try again."
+                "message": "Face not recognized. Please try again.",
+                "processing_time": f"{elapsed_time:.2f}s"
             })
             
     except Exception as e:
         print(f"Error in face_match: {e}")
-        return jsonify({"success": False, "message": "Face matching failed"}), 500
+        return jsonify({
+            "success": False, 
+            "message": "Face matching failed. Please try again."
+        }), 500
 
 @app.route('/add_face', methods=['POST'])
 def add_face():
     """Add new face to database"""
+    start_time = time.time()
     try:
         # Check for both 'file1' (old format) and 'image' (new format)
         file_key = 'image' if 'image' in request.files else 'file1'
@@ -284,12 +309,15 @@ def add_face():
             imgName = uploaded_file.filename.split(".")[0]
         
         response = update_face(imgName, uploaded_file)
+        elapsed_time = time.time() - start_time
+        print(f"⏱️  Face registration took {elapsed_time:.2f} seconds")
         
         if response:
             return jsonify({
                 "success": True, 
                 "message": "Face registered successfully",
-                "employee_name": imgName
+                "employee_name": imgName,
+                "processing_time": f"{elapsed_time:.2f}s"
             })
         else:
             return jsonify({
@@ -299,7 +327,10 @@ def add_face():
             
     except Exception as e:
         print(f"Error in add_face: {e}")
-        return jsonify({"success": False, "message": "Face registration failed"}), 500
+        return jsonify({
+            "success": False, 
+            "message": "Face registration failed. Please try again."
+        }), 500
 
 # ------------------ AUTHENTICATION ENDPOINTS ------------------
 @app.route('/signup', methods=['POST'])
@@ -703,15 +734,6 @@ def update_geofence():
         print(f"Error in update_geofence: {e}")
         return jsonify({"success": False, "message": "Failed to update geofence"}), 500
 
-@app.route('/', methods=['GET'])
-def home():
-    return 'AttendEase APP API is Running Successfully! ✅'
-
-@app.route('/health', methods=['GET'])
-def health():
-    """Health check endpoint"""
-    return jsonify({"status": "OK", "timestamp": datetime.now().isoformat()})
-
 # ------------------ PASSWORD CHANGE ENDPOINTS ------------------
 @app.route('/employees/<employee_id>/password', methods=['PUT'])
 @jwt_required()
@@ -802,6 +824,29 @@ def change_admin_password(admin_id):
     except Exception as e:
         print(f"Error in change_admin_password: {e}")
         return jsonify({"success": False, "message": "Failed to change password"}), 500
+
+# ------------------ UTILITY ENDPOINTS ------------------
+@app.route('/', methods=['GET'])
+def home():
+    return 'AttendEase APP API is Running Successfully! ✅'
+
+@app.route('/health', methods=['GET'])
+def health():
+    """Health check endpoint"""
+    return jsonify({
+        "status": "OK",
+        "timestamp": datetime.now().isoformat(),
+        "service": "AttendEase API"
+    })
+
+@app.route('/keep-alive', methods=['GET'])
+def keep_alive():
+    """Keep-alive endpoint for preventing cold starts"""
+    return jsonify({
+        "status": "alive",
+        "timestamp": datetime.now().isoformat(),
+        "uptime": "active"
+    })
 
 # ------------------ MAIN ENTRY POINT ------------------
 if __name__ == '__main__':
